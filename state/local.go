@@ -1,11 +1,33 @@
 package state
 
 import (
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/hashicorp/terraform/terraform"
 )
+
+// lock metadata structure for local locks
+type lockInfo struct {
+	// Path to the state file
+	Path string
+	// The time the lock was taken
+	Time time.Time
+	// The time this lock expires
+	Expires time.Time
+	// The lock reason passed to State.Lock
+	Reason string
+}
+
+// return the lock info formatted in an error
+func (l *lockInfo) Err() error {
+	return fmt.Errorf("state file %q locked. created:%s, expires:%s, reason:%s",
+		l.Path, l.Time, l.Expires, l.Reason)
+}
 
 // LocalState manages a state storage that is local to the filesystem.
 type LocalState struct {
@@ -18,6 +40,9 @@ type LocalState struct {
 	state     *terraform.State
 	readState *terraform.State
 	written   bool
+
+	lockPath     string
+	lockInfoPath string
 }
 
 // SetState will force a specific state in-memory for this local state.
@@ -29,6 +54,18 @@ func (s *LocalState) SetState(state *terraform.State) {
 // StateReader impl.
 func (s *LocalState) State() *terraform.State {
 	return s.state.DeepCopy()
+}
+
+// Lock implements a local filesystem state.Locker.
+func (s *LocalState) Lock(reason string) error {
+	return s.lock(reason)
+}
+
+func (s *LocalState) Unlock() error {
+	lockPath, lockInfoPath := s.lockPaths()
+	os.Remove(lockPath)
+	os.Remove(lockInfoPath)
+	return nil
 }
 
 // WriteState for LocalState always persists the state as well.
@@ -111,5 +148,57 @@ func (s *LocalState) RefreshState() error {
 
 	s.state = state
 	s.readState = state
+	return nil
+}
+
+// return the paths for a symlink lock and lockInfo metadata.
+func (s *LocalState) lockPaths() (lockPath, lockInfoPath string) {
+	stateDir, stateName := filepath.Split(s.Path)
+	if stateName == "" {
+		panic("empty state file path")
+	}
+
+	if stateName[0] == '.' {
+		stateName = stateName[1:]
+	}
+
+	lockPath = filepath.Join(stateDir, fmt.Sprintf(".%s.lock", stateName))
+	lockInfoPath = filepath.Join(stateDir, fmt.Sprintf(".%s.lock.info", stateName))
+	return
+}
+
+// lockInfo unmarshals the specified file into a lockInfo structure.
+func (s *LocalState) lockInfo(path string) (*lockInfo, error) {
+	infoData, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("state file %q locked, but no info found", s.Path)
+	}
+
+	info := lockInfo{}
+	err = json.Unmarshal(infoData, &info)
+	if err != nil {
+		return nil, fmt.Errorf("state file %q locked, but could not unmarshal lock info: %s", s.Path, err)
+	}
+	return &info, nil
+}
+
+// write a new lock info file
+func (s *LocalState) writeLockInfo(reason, path string) error {
+	lockInfo := &lockInfo{
+		Path:    s.Path,
+		Time:    time.Now(),
+		Expires: time.Now().Add(time.Hour),
+		Reason:  reason,
+	}
+
+	infoData, err := json.Marshal(lockInfo)
+	if err != nil {
+		panic(fmt.Sprintf("could not marshal lock info: %#v", lockInfo))
+	}
+
+	err = ioutil.WriteFile(s.lockInfoPath, infoData, 0600)
+	if err != nil {
+		return fmt.Errorf("could not write lock info for %q: %s", s.Path, err)
+	}
 	return nil
 }
