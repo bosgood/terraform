@@ -40,9 +40,6 @@ type LocalState struct {
 	state     *terraform.State
 	readState *terraform.State
 	written   bool
-
-	lockPath     string
-	lockInfoPath string
 }
 
 // SetState will force a specific state in-memory for this local state.
@@ -196,7 +193,7 @@ func (s *LocalState) writeLockInfo(reason, path string) error {
 		panic(fmt.Sprintf("could not marshal lock info: %#v", lockInfo))
 	}
 
-	err = ioutil.WriteFile(s.lockInfoPath, infoData, 0600)
+	err = ioutil.WriteFile(path, infoData, 0600)
 	if err != nil {
 		return fmt.Errorf("could not write lock info for %q: %s", s.Path, err)
 	}

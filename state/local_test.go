@@ -14,6 +14,48 @@ func TestLocalState(t *testing.T) {
 	TestState(t, ls)
 }
 
+func TestLocalStateLocks(t *testing.T) {
+	s := testLocalState(t)
+	defer os.Remove(s.Path)
+
+	// lock first
+	if err := s.Lock("test"); err != nil {
+		t.Fatal(err)
+	}
+
+	// second lock should fail
+	if err := s.Lock("test"); err == nil {
+		t.Fatal("expected lock failure")
+	}
+
+	if err := s.Unlock(); err != nil {
+		t.Fatal(err)
+	}
+
+	// should be able to re-lock now
+	if err := s.Lock("test"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Unlock should be repeatable
+	if err := s.Unlock(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Unlock(); err != nil {
+		t.Fatal(err)
+	}
+
+	// make sure both files are gone
+	lockPath, lockInfoPath := s.lockPaths()
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+		t.Fatal("lock not removed")
+	}
+	if _, err := os.Stat(lockInfoPath); !os.IsNotExist(err) {
+		t.Fatal("lock info not removed")
+	}
+
+}
+
 func TestLocalState_pathOut(t *testing.T) {
 	f, err := ioutil.TempFile("", "tf")
 	if err != nil {
