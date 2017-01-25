@@ -4,7 +4,6 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
-	"runtime"
 	"testing"
 
 	"github.com/hashicorp/terraform/terraform"
@@ -25,15 +24,7 @@ func TestLocalStateLocks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var out []byte
-	var err error
-	switch runtime.GOOS {
-	case "windows":
-		t.Fatal("not implemented")
-
-	default:
-		out, err = exec.Command("go", "run", "testdata/lockstate_posix.go", s.Path).CombinedOutput()
-	}
+	out, err := exec.Command("go", "run", "testdata/lockstate.go", s.Path).CombinedOutput()
 
 	if err != nil {
 		t.Fatal("unexpected lock failure", err)
