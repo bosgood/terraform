@@ -3,8 +3,6 @@
 package state
 
 import (
-	"fmt"
-	"log"
 	"os"
 	"syscall"
 )
@@ -20,22 +18,7 @@ func (s *LocalState) lock() error {
 	}
 
 	fd := s.stateFile.Fd()
-	err := syscall.FcntlFlock(fd, syscall.F_SETLK, flock)
-	if err != nil {
-		lockInfo, err := s.lockInfo()
-		if err != nil {
-			// we can't get any lock info, at least get the PID if we can.
-			if err := syscall.FcntlFlock(fd, syscall.F_GETLK, flock); err != nil {
-				log.Fatalf("state file locked by pid: %d", flock.Pid)
-			}
-			// the error is only going to be "resource temporarily unavailable"
-			return fmt.Errorf("state file locked")
-		}
-
-		return lockInfo.Err()
-	}
-
-	return nil
+	return syscall.FcntlFlock(fd, syscall.F_SETLK, flock)
 }
 
 func (s *LocalState) unlock() error {

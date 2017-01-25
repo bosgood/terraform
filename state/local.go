@@ -64,7 +64,10 @@ func (s *LocalState) Lock(reason string) error {
 	}
 
 	if err := s.lock(); err != nil {
-		return err
+		if info, err := s.lockInfo(); err != nil {
+			return info.Err()
+		}
+		return fmt.Errorf("state file %q locked: %s", s.Path, err)
 	}
 
 	return s.writeLockInfo(reason)
