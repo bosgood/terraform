@@ -62,7 +62,7 @@ func TestLocalStateLocks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// make sure both files are gone
+	// make sure lock info is gone
 	lockInfoPath := s.lockInfoPath()
 	if _, err := os.Stat(lockInfoPath); !os.IsNotExist(err) {
 		t.Fatal("lock info not removed")
