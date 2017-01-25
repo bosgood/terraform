@@ -37,6 +37,8 @@ type LocalState struct {
 	Path    string
 	PathOut string
 
+	stateFile *os.File
+
 	state     *terraform.State
 	readState *terraform.State
 	written   bool
@@ -55,35 +57,29 @@ func (s *LocalState) State() *terraform.State {
 
 // Lock implements a local filesystem state.Locker.
 func (s *LocalState) Lock(reason string) error {
-	return s.lock(reason)
+	if s.stateFile == nil {
+		if err := s.createStateFile(); err != nil {
+			return err
+		}
+	}
+
+	if err := s.lock(); err != nil {
+		return err
+	}
+
+	return s.writeLockInfo(reason)
 }
 
 func (s *LocalState) Unlock() error {
-	lockPath, lockInfoPath := s.lockPaths()
-	os.Remove(lockPath)
-	os.Remove(lockInfoPath)
-	return nil
+	os.Remove(s.lockInfoPath())
+	return s.unlock()
 }
 
-// WriteState for LocalState always persists the state as well.
-//
-// StateWriter impl.
-func (s *LocalState) WriteState(state *terraform.State) error {
-	s.state = state
-
+// Open the state file, creating the directories and file as needed.
+func (s *LocalState) createStateFile() error {
 	path := s.PathOut
 	if path == "" {
 		path = s.Path
-	}
-
-	// If we don't have any state, we actually delete the file if it exists
-	if state == nil {
-		err := os.Remove(path)
-		if err != nil && os.IsNotExist(err) {
-			return nil
-		}
-
-		return err
 	}
 
 	// Create all the directories
@@ -91,19 +87,48 @@ func (s *LocalState) WriteState(state *terraform.State) error {
 		return err
 	}
 
-	f, err := os.Create(path)
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+
+	s.stateFile = f
+	return nil
+}
+
+// WriteState for LocalState always persists the state as well.
+//
+// StateWriter impl.
+func (s *LocalState) WriteState(state *terraform.State) error {
+	if s.stateFile == nil {
+		if err := s.createStateFile(); err != nil {
+			return nil
+		}
+	}
+
+	s.state = state
+
+	path := s.PathOut
+	if path == "" {
+		path = s.Path
+	}
+
+	if _, err := s.stateFile.Seek(0, os.SEEK_SET); err != nil {
+		return err
+	}
+
+	if err := s.stateFile.Truncate(0); err != nil {
+		return err
+	}
 
 	s.state.IncrementSerialMaybe(s.readState)
 	s.readState = s.state
 
-	if err := terraform.WriteState(s.state, f); err != nil {
+	if err := terraform.WriteState(s.state, s.stateFile); err != nil {
 		return err
 	}
 
+	s.stateFile.Sync()
 	s.written = true
 	return nil
 }
@@ -148,8 +173,8 @@ func (s *LocalState) RefreshState() error {
 	return nil
 }
 
-// return the paths for a symlink lock and lockInfo metadata.
-func (s *LocalState) lockPaths() (lockPath, lockInfoPath string) {
+// return the path for the lockInfo metadata.
+func (s *LocalState) lockInfoPath() string {
 	stateDir, stateName := filepath.Split(s.Path)
 	if stateName == "" {
 		panic("empty state file path")
@@ -159,16 +184,15 @@ func (s *LocalState) lockPaths() (lockPath, lockInfoPath string) {
 		stateName = stateName[1:]
 	}
 
-	lockPath = filepath.Join(stateDir, fmt.Sprintf(".%s.lock", stateName))
-	lockInfoPath = filepath.Join(stateDir, fmt.Sprintf(".%s.lock.info", stateName))
-	return
+	return filepath.Join(stateDir, fmt.Sprintf(".%s.lock.info", stateName))
 }
 
-// lockInfo unmarshals the specified file into a lockInfo structure.
-func (s *LocalState) lockInfo(path string) (*lockInfo, error) {
+// lockInfo returns the data in a lock info file
+func (s *LocalState) lockInfo() (*lockInfo, error) {
+	path := s.lockInfoPath()
 	infoData, err := ioutil.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("state file %q locked, but no info found", s.Path)
+		return nil, err
 	}
 
 	info := lockInfo{}
@@ -180,7 +204,9 @@ func (s *LocalState) lockInfo(path string) (*lockInfo, error) {
 }
 
 // write a new lock info file
-func (s *LocalState) writeLockInfo(reason, path string) error {
+func (s *LocalState) writeLockInfo(reason string) error {
+	path := s.lockInfoPath()
+
 	lockInfo := &lockInfo{
 		Path:    s.Path,
 		Created: time.Now().UTC(),

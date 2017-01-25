@@ -3,6 +3,8 @@ package state
 import (
 	"io/ioutil"
 	"os"
+	"os/exec"
+	"runtime"
 	"testing"
 
 	"github.com/hashicorp/terraform/terraform"
@@ -23,16 +25,40 @@ func TestLocalStateLocks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// second lock should fail
-	if err := s.Lock("test"); err == nil {
-		t.Fatal("expected lock failure")
+	var out []byte
+	var err error
+	switch runtime.GOOS {
+	case "windows":
+		t.Fatal("not implemented")
+
+	default:
+		out, err = exec.Command("go", "run", "testdata/lockstate_posix.go", s.Path).CombinedOutput()
 	}
 
+	if err != nil {
+		t.Fatal("unexpected lock failure", err)
+	}
+
+	if string(out) != "lock failed" {
+		t.Fatal("expected 'locked failed', got", string(out))
+	}
+
+	// check our lock info
+	lockInfo, err := s.lockInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if lockInfo.Reason != "test" {
+		t.Fatalf("invalid lock info %#v\n", lockInfo)
+	}
+
+	// a noop, since we unlock on exit
 	if err := s.Unlock(); err != nil {
 		t.Fatal(err)
 	}
 
-	// should be able to re-lock now
+	// local locks can re-lock
 	if err := s.Lock("test"); err != nil {
 		t.Fatal(err)
 	}
@@ -46,10 +72,7 @@ func TestLocalStateLocks(t *testing.T) {
 	}
 
 	// make sure both files are gone
-	lockPath, lockInfoPath := s.lockPaths()
-	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
-		t.Fatal("lock not removed")
-	}
+	lockInfoPath := s.lockInfoPath()
 	if _, err := os.Stat(lockInfoPath); !os.IsNotExist(err) {
 		t.Fatal("lock info not removed")
 	}
